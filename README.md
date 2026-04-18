@@ -119,6 +119,12 @@ hyperv-generic-golden-image-kit/
 
 ---
 
+## 📚 Documentation
+
+For a more detailed, operations-focused guide, see [docs/README_DETAILED.md](docs/README_DETAILED.md).
+
+---
+
 ## 🎯 Step-by-Step Walkthrough
 
 ### Phase 1: Prepare Golden Image on Ubuntu VM
