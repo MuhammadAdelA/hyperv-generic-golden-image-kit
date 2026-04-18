@@ -18,7 +18,7 @@ sudo poweroff
   -SeedDiskPath "D:\HyperV\Seeds\dev-vm-01-seed.vhdx" `
   -Hostname "dev-vm-01" `
   -AdminUser "ubuntuadmin" `
-  -SshPublicKeyPath "C:\Users\YourName\.ssh\id_ed25519.pub" `
+  -SshPublicKeyPath "$env:USERPROFILE\.ssh\id_ed25519.pub" `
   -InterfaceMacAddress "00-15-5D-32-10-01" `
   -TemplateRoot ".\cloud-init"
 ```
@@ -124,6 +124,22 @@ hyperv-generic-golden-image-kit/
 For a more detailed, operations-focused guide, see [docs/README_DETAILED.md](docs/README_DETAILED.md).
 
 ---
+## 🧭 Interactive Workflow (Optional)
+
+If you are using the companion interactive launcher script for this workflow, you can answer prompts step by step instead of typing the seed and VM creation commands manually.
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\New-GoldenVmInteractive.v2.ps1
+```
+
+The launcher asks for the same required values used by the project scripts, then calls:
+- `windows/New-NoCloudSeedDisk.ps1`
+- `windows/New-HyperVVmFromGolden.ps1`
+
+It can also create or overwrite only the seed disk and skip VM creation when you choose that option.
+
+---
 
 ## 🎯 Step-by-Step Walkthrough
 
@@ -186,7 +202,7 @@ $SeedDisk = "D:\HyperV\Seeds\ubuntu-dev-01-seed.vhdx"
   -SeedDiskPath $SeedDisk `
   -Hostname "ubuntu-dev-01" `
   -AdminUser "ubuntuadmin" `
-  -SshPublicKeyPath "C:\Users\User\.ssh\id_ed25519.pub" `
+  -SshPublicKeyPath "$env:USERPROFILE\.ssh\id_ed25519.pub" `
   -InterfaceMacAddress $Mac `
   -TemplateRoot ".\cloud-init"
 ```
@@ -197,7 +213,7 @@ $SeedDisk = "D:\HyperV\Seeds\ubuntu-dev-01-seed.vhdx"
   -SeedDiskPath $SeedDisk `
   -Hostname "ubuntu-panel-01" `
   -AdminUser "ubuntuadmin" `
-  -SshPublicKeyPath "C:\Users\User\.ssh\id_ed25519.pub" `
+  -SshPublicKeyPath "$env:USERPROFILE\.ssh\id_ed25519.pub" `
   -InterfaceMacAddress "00-15-5D-32-20-10" `
   -TemplateRoot ".\cloud-init" `
   -StaticIpCidr "192.168.201.10/24" `
@@ -211,7 +227,7 @@ $SeedDisk = "D:\HyperV\Seeds\ubuntu-dev-01-seed.vhdx"
   -SeedDiskPath $SeedDisk `
   -Hostname "ubuntu-dev-01" `
   -AdminUser "ubuntuadmin" `
-  -SshPublicKeyPath "C:\Users\User\.ssh\id_ed25519.pub" `
+  -SshPublicKeyPath "$env:USERPROFILE\.ssh\id_ed25519.pub" `
   -InterfaceMacAddress "00-15-5D-32-10-01" `
   -TemplateRoot ".\cloud-init" `
   -EnableRescueUser $true `
