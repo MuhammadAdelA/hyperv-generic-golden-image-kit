@@ -1,0 +1,32 @@
+#cloud-config
+preserve_hostname: false
+manage_etc_hosts: true
+
+disable_root: true
+ssh_pwauth: __SSH_PWAUTH__
+ssh_deletekeys: true
+package_update: false
+package_upgrade: false
+
+users:
+  - name: __ADMIN_USER__
+    gecos: __ADMIN_USER__
+    shell: /bin/bash
+    groups: [adm, sudo]
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
+    ssh_authorized_keys:
+      - __SSH_PUBLIC_KEY__
+__RESCUE_USER_BLOCK__
+
+__RESCUE_CHPASSWD_BLOCK__
+write_files:
+  - path: /etc/motd
+    permissions: '0644'
+    content: |
+      Generic Hyper-V Ubuntu clone
+      Hostname: __HOSTNAME__
+      Provisioning: cloud-init NoCloud
+      Rescue user enabled: __RESCUE_USER_ENABLED__
+
+final_message: "cloud-init finished for __HOSTNAME__ after $UPTIME seconds"

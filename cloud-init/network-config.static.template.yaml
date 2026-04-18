@@ -1,0 +1,15 @@
+version: 2
+ethernets:
+  lan0:
+    match:
+      macaddress: "__MAC_ADDRESS__"
+    set-name: lan0
+    dhcp4: false
+    dhcp6: false
+    optional: true
+    addresses:
+      - "__IP_CIDR__"
+    routes:
+      - to: default
+        via: "__GATEWAY__"
+__NAMESERVERS_BLOCK__

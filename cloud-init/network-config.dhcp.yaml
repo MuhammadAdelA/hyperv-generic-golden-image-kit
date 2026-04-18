@@ -1,0 +1,9 @@
+version: 2
+ethernets:
+  lan0:
+    match:
+      macaddress: "__MAC_ADDRESS__"
+    set-name: lan0
+    dhcp4: true
+    dhcp6: false
+    optional: true
