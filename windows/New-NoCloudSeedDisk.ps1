@@ -15,25 +15,48 @@ param(
     [string]$InterfaceMacAddress,
 
     [string]$InstanceId = ("iid-{0}" -f ([guid]::NewGuid().ToString())),
-    [string]$TemplateRoot = "..\cloud-init",
+    [string]$TemplateRoot,
     [string]$NetworkConfigPath,
     [string]$InterfaceName = "lan0",
     [string]$StaticIpCidr,
     [string]$Gateway,
-    [string[]]$DnsServers = @("1.1.1.1", "8.8.8.8"),
+    [string[]]$DnsServers = @(),
     [bool]$EnableRescueUser = $true,
-    [string]$RescueUser = "rescueadmin",
+    [string]$RescueUser = "rescue",
     [string]$RescueSshPublicKeyPath,
     [string]$RescuePassword,
+    [switch]$SetRescuePassword,
     [switch]$EnableRescueSshPassword
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if ([string]::IsNullOrWhiteSpace($TemplateRoot)) {
+    $repoRoot = Split-Path -Parent $PSScriptRoot
+    $TemplateRoot = Join-Path $repoRoot 'cloud-init'
+}
+
 
 function New-RandomPassword {
     param([int]$Length = 20)
+
     $chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*()-_=+'
-    -join (1..$Length | ForEach-Object { $chars[(Get-Random -Minimum 0 -Maximum $chars.Length)] })
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    $builder = New-Object System.Text.StringBuilder
+
+    try {
+        while ($builder.Length -lt $Length) {
+            $bytes = New-Object byte[] 1
+            $rng.GetBytes($bytes)
+            [void]$builder.Append($chars[$bytes[0] % $chars.Length])
+        }
+    }
+    finally {
+        $rng.Dispose()
+    }
+
+    return $builder.ToString()
 }
 
 function Convert-ToCloudInitMacAddress {
@@ -117,6 +140,7 @@ $sshPwAuth = 'false'
 $rescueUserBlock = ''
 $rescueChpasswdBlock = ''
 $rescuePasswordGenerated = $false
+$rescuePasswordConfigured = $false
 $rescueKey = $sshKey
 
 if ($EnableRescueUser) {
@@ -127,15 +151,23 @@ if ($EnableRescueUser) {
         $rescueKey = (Get-Content $RescueSshPublicKeyPath -Raw).Trim()
     }
 
-    if (-not $RescuePassword) {
-        $RescuePassword = New-RandomPassword
-        $rescuePasswordGenerated = $true
-    }
-
     $rescueEnabledText = 'true'
     if ($EnableRescueSshPassword.IsPresent) {
         $sshPwAuth = 'true'
     }
+
+    $shouldConfigureRescuePassword = $EnableRescueSshPassword.IsPresent -or $SetRescuePassword.IsPresent -or (-not [string]::IsNullOrWhiteSpace($RescuePassword))
+    if ($shouldConfigureRescuePassword) {
+        if ([string]::IsNullOrWhiteSpace($RescuePassword)) {
+            $RescuePassword = New-RandomPassword
+            $rescuePasswordGenerated = $true
+        }
+
+        $rescuePasswordConfigured = $true
+        $rescueChpasswdBlock = New-ChpasswdBlock -UserName $RescueUser -Password $RescuePassword
+    }
+
+    $rescueLockPasswd = if ($rescuePasswordConfigured) { 'false' } else { 'true' }
 
     $rescueUserBlock = @"
   - name: $RescueUser
@@ -143,12 +175,10 @@ if ($EnableRescueUser) {
     shell: /bin/bash
     groups: [adm, sudo]
     sudo: ALL=(ALL) NOPASSWD:ALL
-    lock_passwd: false
+    lock_passwd: $rescueLockPasswd
     ssh_authorized_keys:
       - $rescueKey
 "@
-
-    $rescueChpasswdBlock = New-ChpasswdBlock -UserName $RescueUser -Password $RescuePassword
 }
 
 $metaContent = Set-TemplateValues -Text $metaTemplate -Values @{
@@ -200,7 +230,8 @@ $networkContent = Set-TemplateValues -Text $networkTemplate -Values @{
     '__NAMESERVERS_BLOCK__' = $nameserversBlock.TrimEnd()
 }
 
-$tempDir = Join-Path $env:TEMP ("generic-seed-{0}" -f ([guid]::NewGuid().ToString()))
+$tempRoot = if ($env:TEMP) { $env:TEMP } else { [System.IO.Path]::GetTempPath() }
+$tempDir = Join-Path $tempRoot ("generic-seed-{0}" -f ([guid]::NewGuid().ToString()))
 New-Item -ItemType Directory -Path $tempDir | Out-Null
 
 try {
@@ -235,10 +266,26 @@ try {
     Copy-Item (Join-Path $tempDir 'user-data') (Join-Path $driveRoot 'user-data') -Force
     Copy-Item (Join-Path $tempDir 'network-config') (Join-Path $driveRoot 'network-config') -Force
 
+    $rescuePasswordSummary = if (-not $EnableRescueUser) {
+        '<disabled>'
+    }
+    elseif (-not $rescuePasswordConfigured) {
+        '<not configured>'
+    }
+    elseif ($rescuePasswordGenerated) {
+        $RescuePassword
+    }
+    elseif ($RescuePassword) {
+        '<supplied by caller; not written>'
+    }
+    else {
+        '<not set>'
+    }
+
     $summary = @(
         "Hostname: $Hostname",
-        "Rescue user: $RescueUser",
-        "Rescue password: $RescuePassword",
+        "Rescue user: $(if ($EnableRescueUser) { $RescueUser } else { '<disabled>' })",
+        "Rescue password: $rescuePasswordSummary",
         "SSH password auth enabled: $sshPwAuth",
         "Interface MAC: $cloudInitMacAddress",
         "Seed disk: $SeedDiskPath"
@@ -256,7 +303,10 @@ finally {
 Write-Host "Created NoCloud seed disk: $SeedDiskPath"
 if ($EnableRescueUser) {
     Write-Host "Rescue user enabled: $RescueUser"
-    if ($rescuePasswordGenerated) {
+    if (-not $rescuePasswordConfigured) {
+        Write-Host 'Rescue password not configured.'
+    }
+    elseif ($rescuePasswordGenerated) {
         Write-Host "Generated rescue password: $RescuePassword"
     }
     else {

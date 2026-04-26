@@ -1,9 +1,9 @@
 version: 2
 ethernets:
-  lan0:
+  __INTERFACE_NAME__:
     match:
       macaddress: "__MAC_ADDRESS__"
-    set-name: lan0
+    set-name: __INTERFACE_NAME__
     dhcp4: false
     dhcp6: false
     optional: true
