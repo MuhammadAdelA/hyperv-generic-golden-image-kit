@@ -42,6 +42,8 @@ The golden image stays clean and generic. Each VM clone gets its own identity in
 ├── New-GoldenVmInteractive.config.dhcp.example.psd1    # DHCP example config
 ├── New-GoldenVmInteractive.config.static.example.psd1  # Static IP example config
 ├── AUTO-CONFIG.md                      # Auto/config usage guide
+├── Migrate-SeedDisksToVmFolders.ps1    # Move legacy seed disks into per-VM folders
+├── Remove-HyperVVmSafe.ps1             # Preview/delete a VM and its owned files safely
 ├── scripts/                           # Linux-side preparation scripts
 │   ├── prepare-current-image-for-golden.sh  # Initial system setup
 │   └── seal-golden-image.sh                 # Finalize and clean image
@@ -204,6 +206,85 @@ Once connected, run your project-specific bootstrap scripts:
 ```bash
 ./setup-dev-environment.sh
 ```
+
+## Maintenance Utilities
+
+The repository includes optional maintenance scripts for day-to-day Hyper-V cleanup and migration tasks. Run them from an elevated PowerShell session when they need to read or modify Hyper-V settings.
+
+### Migrate legacy seed disks to per-VM folders
+
+Use `Migrate-SeedDisksToVmFolders.ps1` after switching to the newer seed layout where each VM has its own seed folder:
+
+```text
+<SeedRoot>\<VMName>\<VMName>-seed.vhdx
+```
+
+The script looks for old root-level seed disks such as:
+
+```text
+D:\HyperV\Seeds\web-server-seed.vhdx
+```
+
+and plans to move them to:
+
+```text
+D:\HyperV\Seeds\web-server\web-server-seed.vhdx
+```
+
+It also moves the matching `.rescue.txt` file when present and updates the existing Hyper-V VM disk attachment to the new seed path.
+
+Preview first:
+
+```powershell
+.\Migrate-SeedDisksToVmFolders.ps1 -SeedRoot "D:\HyperV\Seeds"
+```
+
+Apply the migration only after reviewing the plan:
+
+```powershell
+.\Migrate-SeedDisksToVmFolders.ps1 -SeedRoot "D:\HyperV\Seeds" -Apply
+```
+
+Recommended checks after migration:
+
+```powershell
+Get-VMHardDiskDrive |
+  Where-Object { $_.Path -like "D:\HyperV\Seeds\*" } |
+  Select-Object VMName, Path |
+  Format-Table -AutoSize
+
+Get-ChildItem "D:\HyperV\Seeds" -File -Filter "*-seed.vhdx"
+```
+
+Notes:
+
+- The script is dry-run by default.
+- By default, attached VMs must be `Off` before their seed disk path is changed.
+- If related `.avhdx` files are found, the item is skipped so checkpoints or differencing disk chains are not moved unsafely.
+
+### Safely remove a Hyper-V VM and owned files
+
+Use `Remove-HyperVVmSafe.ps1` when you want to inspect and optionally delete a VM plus its directly owned VHD/VHDX and Hyper-V metadata folders.
+
+Preview first:
+
+```powershell
+.\Remove-HyperVVmSafe.ps1 -VmName "vm-prod-01"
+```
+
+Delete only after reviewing the preview output:
+
+```powershell
+.\Remove-HyperVVmSafe.ps1 -VmName "vm-prod-01" -Action Delete
+```
+
+Safety behavior:
+
+- Preview is the default action.
+- The script shows hard disks that will be deleted before deletion.
+- DVD/ISO paths are displayed only and are not deleted directly.
+- Virtual switches, NAT networks, and `VM-NAT` are not deleted.
+- The VM parent folder is deleted only if it becomes empty and its folder name matches the VM name.
 
 ## Configuration
 

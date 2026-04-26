@@ -11,38 +11,38 @@ $ErrorActionPreference = "Stop"
 Write-Host "`nTarget VM: $VmName" -ForegroundColor Cyan
 Write-Host "Action   : $Action" -ForegroundColor Cyan
 
-# التأكد من وجود الـ VM
+# Verify that the VM exists
 $vm = Get-VM -Name $VmName -ErrorAction Stop
 
-# جمع أقراص VHD / VHDX
+# Collect VHD/VHDX disks
 $hardDisks = Get-VMHardDiskDrive -VMName $VmName
 
-# جمع DVD / ISO للعرض فقط، ولن يتم حذفها
+# Collect DVD/ISO paths for display only; they are not deleted
 $dvdDrives = Get-VMDvdDrive -VMName $VmName | Where-Object { $_.Path }
 
-# المسارات التي سيتم حذفها
+# Paths that may be deleted
 $paths = @()
 
-# أقراص الـ VM
+# VM disks
 $paths += $hardDisks | Select-Object -ExpandProperty Path
 
-# مجلدات Hyper-V الخاصة بالـ VM
+# Hyper-V folders associated with the VM
 $paths += $vm.Path
 $paths += $vm.ConfigurationLocation
 $paths += $vm.SnapshotFileLocation
 $paths += $vm.SmartPagingFilePath
 
-# تنظيف القائمة من الفراغات والتكرار
+# Remove empty entries and duplicates
 $paths = $paths |
     Where-Object { $_ } |
     Sort-Object -Unique
 
-# فولدر الـ VM الأب
-# مثال:
+# VM parent folder
+# Example:
 # D:\HyperV\VMs\vm-dev-01
 $vmParentFolder = Split-Path $vm.Path -Parent
 
-# حماية: لا نحذف فولدر الأب إلا إذا كان اسمه مطابقًا لاسم الـ VM
+# Safety guard: delete the parent folder only if its name matches the VM name
 $canDeleteParentFolder = $false
 
 if ($vmParentFolder -and ((Split-Path $vmParentFolder -Leaf) -eq $VmName)) {
@@ -106,7 +106,7 @@ Write-Host "This script does NOT delete VM-NAT, Virtual Switches, or NetNat." -F
 Write-Host "DVD/ISO paths are displayed only and are NOT deleted directly." -ForegroundColor Cyan
 Write-Host "Parent folder is deleted only if empty and its name matches the VM name." -ForegroundColor Cyan
 
-# وضع المعاينة فقط
+# Preview mode only
 if ($Action -eq "Preview") {
     Write-Host "`nPreview only. Nothing was deleted." -ForegroundColor Green
     Write-Host "To actually delete, run with: -Action Delete" -ForegroundColor Green
@@ -115,17 +115,17 @@ if ($Action -eq "Preview") {
 
 Write-Host "`nDeleting VM and related files..." -ForegroundColor Red
 
-# إيقاف الـ VM إذا كانت تعمل
+# Stop the VM if it is running
 if ($vm.State -ne "Off") {
     Write-Host "Stopping VM: $VmName" -ForegroundColor DarkYellow
     Stop-VM -Name $VmName -TurnOff -Force -ErrorAction SilentlyContinue
 }
 
-# حذف تعريف الـ VM من Hyper-V
+# Remove the VM registration from Hyper-V
 Write-Host "Removing VM from Hyper-V: $VmName" -ForegroundColor DarkYellow
 Remove-VM -Name $VmName -Force
 
-# حذف الملفات والمجلدات المرتبطة
+# Delete related files and folders
 foreach ($p in $paths) {
     if (Test-Path -LiteralPath $p) {
         Write-Host "Deleting: $p" -ForegroundColor DarkYellow
@@ -133,7 +133,7 @@ foreach ($p in $paths) {
     }
 }
 
-# حذف فولدر الـ VM الأب إذا أصبح فارغًا، وبشرط أن يكون اسمه مطابقًا لاسم الـ VM
+# Delete the VM parent folder only if it becomes empty and its name matches the VM name
 if ($canDeleteParentFolder) {
     if ((Test-Path -LiteralPath $vmParentFolder) -and -not (Get-ChildItem -LiteralPath $vmParentFolder -Force)) {
         Write-Host "Deleting empty parent folder: $vmParentFolder" -ForegroundColor DarkYellow
