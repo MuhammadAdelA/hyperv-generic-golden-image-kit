@@ -22,7 +22,7 @@
     IpOctet = 0
     Gateway = ''
     DnsServers = @()
-    InterfaceName = 'eth0'
+    InterfaceName = 'lan0'
 
     EnableRescueUser = $true
     RescueUser = 'rescue'

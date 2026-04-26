@@ -99,21 +99,21 @@
     # IpPrefix:
     # First three octets of the IP address when using Static mode without StaticIpCidr.
     # Do not put /24 here, and do not put the last octet here.
-    # Correct: '192.168.200'
+    # Correct: '192.168.201'
     # Wrong:   '24'
-    # Wrong:   '192.168.200.'
+    # Wrong:   '192.168.201.'
     IpPrefix = ''
 
     # IpOctet:
     # Last IP address octet when using IpPrefix.
     # Must be between 1 and 254.
-    # Example: IpPrefix='192.168.200' and IpOctet=10 produce: 192.168.200.10/24
+    # Example: IpPrefix='192.168.201' and IpOctet=25 produce: 192.168.201.25/24
     # Leave it as 0 when using DHCP or StaticIpCidr.
     IpOctet = 0
 
     # Gateway:
     # Network gateway when using Static IP.
-    # Example: '192.168.200.1'
+    # Example: '192.168.201.1'
     # Leave it empty when using DHCP.
     Gateway = ''
 

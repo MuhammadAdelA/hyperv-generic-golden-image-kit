@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     # Automation/config inputs. In -Auto mode, environment-specific values come from config, then CLI overrides.
     [string]$RepoRoot,
@@ -19,7 +19,7 @@ param(
     [bool]$UseStatic = $false,
     [string]$StaticIpCidr,
     [string]$IpPrefix,
-    [ValidateRange(1,254)][int]$IpOctet,
+    [int]$IpOctet,
     [string]$Gateway,
     [string[]]$DnsServers,
     [string]$InterfaceName = 'lan0',
@@ -31,11 +31,11 @@ param(
     [bool]$EnableRescueSshPassword = $false,
     [bool]$SetRescuePassword = $false,
 
-    [ValidateRange(1,1024)][int]$MemoryStartupGb = 4,
-    [ValidateRange(1,1024)][int]$MinimumMemoryGb = 2,
-    [ValidateRange(1,1024)][int]$MaximumMemoryGb = 8,
-    [ValidateRange(1,256)][int]$ProcessorCount = 2,
-    [ValidateRange(0,63)][int]$SeedControllerLocation = 1,
+    [int]$MemoryStartupGb = 4,
+    [int]$MinimumMemoryGb = 2,
+    [int]$MaximumMemoryGb = 8,
+    [int]$ProcessorCount = 2,
+    [int]$SeedControllerLocation = 1,
     [bool]$StartAfterCreate = $true,
 
     [switch]$Auto
@@ -81,7 +81,7 @@ function Import-WrapperConfig {
     if (-not (Test-Path -LiteralPath $Path)) {
         if ($Required -or $Explicit) {
             $examplePath = Join-Path (Split-Path -Parent $Path) 'New-GoldenVmInteractive.config.example.psd1'
-            throw "Config file not found: $Path. Copy/fill the example config first: $examplePath, or pass -ConfigPath with a valid file."
+            throw "Config file not found: ${Path}. Copy/fill the example config first: ${examplePath}, or pass -ConfigPath with a valid file."
         }
 
         return @{}
@@ -91,7 +91,7 @@ function Import-WrapperConfig {
         $data = Import-PowerShellDataFile -Path $Path
     }
     catch {
-        throw "Failed to read config file: $Path. $($_.Exception.Message)"
+        throw "Failed to read config file: ${Path}. Please fix the config syntax and try again. $($_.Exception.Message)"
     }
 
     if ($null -eq $data) {
@@ -110,7 +110,7 @@ function Import-WrapperConfig {
 
     $unknownKeys = @($data.Keys | Where-Object { $_ -notin $knownKeys })
     if ($unknownKeys.Count -gt 0) {
-        throw "Unknown config key(s) in ${Path}: $($unknownKeys -join ', '). Check spelling or remove unsupported keys."
+        throw "Unknown config key(s) in ${Path}: $($unknownKeys -join ', '). Please correct the key name(s) or remove unsupported keys, then run again."
     }
 
     return $data
@@ -192,7 +192,8 @@ function Read-Default {
 function Read-RequiredValue {
     param(
         [Parameter(Mandatory = $true)][string]$Prompt,
-        [AllowNull()][string]$Default = ''
+        [AllowNull()][string]$Default = '',
+        [AllowNull()][string]$ParameterName = ''
     )
 
     while ($true) {
@@ -202,10 +203,10 @@ function Read-RequiredValue {
         }
 
         if ($script:AutoMode) {
-            throw "A value is required for: $Prompt"
+            Stop-InputError -Field $Prompt -Value $value -Expected 'non-empty value' -ParameterName $ParameterName
         }
 
-        Write-Warning 'A value is required.'
+        Write-InputRetryWarning -Field $Prompt -Value $value -Expected 'non-empty value' -ParameterName $ParameterName
     }
 }
 
@@ -234,31 +235,271 @@ function Read-YesNo {
     }
 }
 
+
+function Format-InputValueForMessage {
+    param([AllowNull()][object]$Value)
+
+    if ($null -eq $Value) {
+        return '<null>'
+    }
+
+    $text = [string]$Value
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        return '<empty>'
+    }
+
+    return $text
+}
+
+function Get-InputFixHint {
+    param(
+        [AllowNull()][string]$ParameterName = ''
+    )
+
+    if ($script:AutoMode) {
+        $configHint = if ($script:ResolvedConfigPath) { $script:ResolvedConfigPath } else { 'New-GoldenVmInteractive.config.psd1' }
+        if (-not [string]::IsNullOrWhiteSpace($ParameterName)) {
+            if ($ParameterName -match '[/, ]') {
+                return "Please correct this value in the config file (${configHint}) or override the related CLI parameter(s) (${ParameterName}), then run again."
+            }
+            return "Please correct this value in the config file (${configHint}) or override it with -${ParameterName}, then run again."
+        }
+        return "Please correct this value in the config file (${configHint}) or pass the correct CLI parameter, then run again."
+    }
+
+    return 'Please enter the correct value and try again.'
+}
+
+function New-InputErrorMessage {
+    param(
+        [Parameter(Mandatory = $true)][string]$Field,
+        [AllowNull()][object]$Value,
+        [Parameter(Mandatory = $true)][string]$Expected,
+        [AllowNull()][string]$ParameterName = ''
+    )
+
+    $valueText = Format-InputValueForMessage -Value $Value
+    $hint = Get-InputFixHint -ParameterName $ParameterName
+    return "Invalid input for '${Field}'. Current value: ${valueText}. Expected: ${Expected}. ${hint}"
+}
+
+function Stop-InputError {
+    param(
+        [Parameter(Mandatory = $true)][string]$Field,
+        [AllowNull()][object]$Value,
+        [Parameter(Mandatory = $true)][string]$Expected,
+        [AllowNull()][string]$ParameterName = ''
+    )
+
+    throw (New-InputErrorMessage -Field $Field -Value $Value -Expected $Expected -ParameterName $ParameterName)
+}
+
+function Write-InputRetryWarning {
+    param(
+        [Parameter(Mandatory = $true)][string]$Field,
+        [AllowNull()][object]$Value,
+        [Parameter(Mandatory = $true)][string]$Expected,
+        [AllowNull()][string]$ParameterName = ''
+    )
+
+    Write-Warning (New-InputErrorMessage -Field $Field -Value $Value -Expected $Expected -ParameterName $ParameterName)
+}
+
+function Test-IPv4Address {
+    param([AllowNull()][string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $false
+    }
+
+    $parts = $Value.Trim() -split '\.'
+    if ($parts.Count -ne 4) {
+        return $false
+    }
+
+    foreach ($part in $parts) {
+        $octet = 0
+        if (-not [int]::TryParse($part, [ref]$octet)) {
+            return $false
+        }
+        if ($octet -lt 0 -or $octet -gt 255) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
+function Test-IPv4Prefix3 {
+    param([AllowNull()][string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $false
+    }
+
+    $parts = $Value.Trim().TrimEnd('.') -split '\.'
+    if ($parts.Count -ne 3) {
+        return $false
+    }
+
+    foreach ($part in $parts) {
+        $octet = 0
+        if (-not [int]::TryParse($part, [ref]$octet)) {
+            return $false
+        }
+        if ($octet -lt 0 -or $octet -gt 255) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
+function Test-IPv4Cidr {
+    param([AllowNull()][string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $false
+    }
+
+    $parts = $Value.Trim() -split '/'
+    if ($parts.Count -ne 2) {
+        return $false
+    }
+
+    $cidr = 0
+    if (-not [int]::TryParse($parts[1], [ref]$cidr)) {
+        return $false
+    }
+
+    return ((Test-IPv4Address -Value $parts[0]) -and $cidr -ge 0 -and $cidr -le 32)
+}
+
+function Test-MacAddress {
+    param([AllowNull()][string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $false
+    }
+
+    return ($Value.Trim() -match '(?i)^([0-9a-f]{2}([-:])){5}[0-9a-f]{2}$')
+}
+
+function Read-RequiredMacAddress {
+    param(
+        [Parameter(Mandatory = $true)][string]$Prompt,
+        [AllowNull()][string]$Default = '',
+        [AllowNull()][string]$ParameterName = ''
+    )
+
+    while ($true) {
+        $value = Read-RequiredValue -Prompt $Prompt -Default $Default -ParameterName $ParameterName
+        if (Test-MacAddress -Value $value) {
+            return $value
+        }
+
+        if ($script:AutoMode) {
+            Stop-InputError -Field $Prompt -Value $value -Expected 'MAC address in 00-15-5D-12-34-56 or 00:15:5D:12:34:56 format' -ParameterName $ParameterName
+        }
+
+        Write-InputRetryWarning -Field $Prompt -Value $value -Expected 'MAC address in 00-15-5D-12-34-56 or 00:15:5D:12:34:56 format' -ParameterName $ParameterName
+    }
+}
+
+function Read-IpPrefix3 {
+    param(
+        [Parameter(Mandatory = $true)][string]$Prompt,
+        [AllowNull()][string]$Default = '',
+        [AllowNull()][string]$ParameterName = ''
+    )
+
+    while ($true) {
+        $value = Read-RequiredValue -Prompt $Prompt -Default $Default -ParameterName $ParameterName
+        if (Test-IPv4Prefix3 -Value $value) {
+            return $value.Trim().TrimEnd('.')
+        }
+
+        if ($script:AutoMode) {
+            Stop-InputError -Field $Prompt -Value $value -Expected "first three IPv4 octets only, for example '192.168.201'" -ParameterName $ParameterName
+        }
+
+        Write-InputRetryWarning -Field $Prompt -Value $value -Expected "first three IPv4 octets only, for example '192.168.201'" -ParameterName $ParameterName
+    }
+}
+
+function Read-IPv4AddressValue {
+    param(
+        [Parameter(Mandatory = $true)][string]$Prompt,
+        [AllowNull()][string]$Default = '',
+        [AllowNull()][string]$ParameterName = ''
+    )
+
+    while ($true) {
+        $value = Read-RequiredValue -Prompt $Prompt -Default $Default -ParameterName $ParameterName
+        if (Test-IPv4Address -Value $value) {
+            return $value.Trim()
+        }
+
+        if ($script:AutoMode) {
+            Stop-InputError -Field $Prompt -Value $value -Expected "valid IPv4 address, for example '192.168.201.1'" -ParameterName $ParameterName
+        }
+
+        Write-InputRetryWarning -Field $Prompt -Value $value -Expected "valid IPv4 address, for example '192.168.201.1'" -ParameterName $ParameterName
+    }
+}
+
+function Read-IntInRange {
+    param(
+        [Parameter(Mandatory = $true)][string]$Prompt,
+        [int]$Default,
+        [int]$Minimum,
+        [int]$Maximum,
+        [AllowNull()][string]$ParameterName = ''
+    )
+
+    while ($true) {
+        $raw = Read-Default -Prompt $Prompt -Default ([string]$Default)
+        $parsed = 0
+        if ([int]::TryParse($raw, [ref]$parsed) -and $parsed -ge $Minimum -and $parsed -le $Maximum) {
+            return $parsed
+        }
+
+        $expected = "integer between ${Minimum} and ${Maximum}"
+        if ($script:AutoMode) {
+            Stop-InputError -Field $Prompt -Value $raw -Expected $expected -ParameterName $ParameterName
+        }
+
+        Write-InputRetryWarning -Field $Prompt -Value $raw -Expected $expected -ParameterName $ParameterName
+    }
+}
+
 function Read-RequiredPath {
     param(
         [Parameter(Mandatory = $true)][string]$Prompt,
         [AllowNull()][string]$Default = '',
-        [bool]$MustExist = $true
+        [bool]$MustExist = $true,
+        [AllowNull()][string]$ParameterName = ''
     )
 
     while ($true) {
-        $path = Read-RequiredValue -Prompt $Prompt -Default $Default
-        if (-not $MustExist -or (Test-Path $path)) {
+        $path = Read-RequiredValue -Prompt $Prompt -Default $Default -ParameterName $ParameterName
+        if (-not $MustExist -or (Test-Path -LiteralPath $path)) {
             return $path
         }
 
         if ($script:AutoMode) {
-            throw "Path not found: $path"
+            Stop-InputError -Field $Prompt -Value $path -Expected 'existing path' -ParameterName $ParameterName
         }
 
-        Write-Warning "Path not found: $path"
+        Write-InputRetryWarning -Field $Prompt -Value $path -Expected 'existing path' -ParameterName $ParameterName
     }
 }
 
 function Read-PositiveInt {
     param(
         [Parameter(Mandatory = $true)][string]$Prompt,
-        [int]$Default
+        [int]$Default,
+        [AllowNull()][string]$ParameterName = ''
     )
 
     while ($true) {
@@ -269,17 +510,18 @@ function Read-PositiveInt {
         }
 
         if ($script:AutoMode) {
-            throw "Please provide a positive integer for: $Prompt"
+            Stop-InputError -Field $Prompt -Value $raw -Expected 'positive integer greater than 0' -ParameterName $ParameterName
         }
 
-        Write-Warning 'Please enter a positive integer.'
+        Write-InputRetryWarning -Field $Prompt -Value $raw -Expected 'positive integer greater than 0' -ParameterName $ParameterName
     }
 }
 
 function Read-IpLastOctet {
     param(
         [Parameter(Mandatory = $true)][string]$Prompt,
-        [AllowNull()][string]$Default = ''
+        [AllowNull()][string]$Default = '',
+        [AllowNull()][string]$ParameterName = ''
     )
 
     while ($true) {
@@ -290,10 +532,10 @@ function Read-IpLastOctet {
         }
 
         if ($script:AutoMode) {
-            throw "Please provide an IP last octet between 1 and 254 for: $Prompt"
+            Stop-InputError -Field $Prompt -Value $raw -Expected 'IP last octet between 1 and 254' -ParameterName $ParameterName
         }
 
-        Write-Warning 'Please enter a value between 1 and 254.'
+        Write-InputRetryWarning -Field $Prompt -Value $raw -Expected 'IP last octet between 1 and 254' -ParameterName $ParameterName
     }
 }
 
@@ -386,12 +628,17 @@ function Resolve-StaticIp {
     )
 
     if (-not [string]::IsNullOrWhiteSpace($ProvidedStaticIpCidr)) {
-        return $ProvidedStaticIpCidr.Trim()
+        $candidate = $ProvidedStaticIpCidr.Trim()
+        if (Test-IPv4Cidr -Value $candidate) {
+            return $candidate
+        }
+
+        Stop-InputError -Field 'Static IP/CIDR' -Value $candidate -Expected "valid IPv4 CIDR, for example '192.168.201.25/24'" -ParameterName 'StaticIpCidr'
     }
 
-    $prefix = Read-RequiredValue -Prompt 'Static IP prefix (first three octets, e.g. a.b.c)' -Default $ProvidedIpPrefix
+    $prefix = Read-IpPrefix3 -Prompt 'Static IP prefix (first three octets, e.g. a.b.c)' -Default $ProvidedIpPrefix -ParameterName 'IpPrefix'
     $octetDefault = if ($ProvidedIpOctet -ge 1) { [string]$ProvidedIpOctet } else { '' }
-    $selectedIpOctet = Read-IpLastOctet -Prompt ("IP last octet for {0}.[x]" -f $prefix) -Default $octetDefault
+    $selectedIpOctet = Read-IpLastOctet -Prompt ("IP last octet for {0}.[x]" -f $prefix) -Default $octetDefault -ParameterName 'IpOctet'
     return "{0}.{1}/24" -f $prefix.Trim().TrimEnd('.'), $selectedIpOctet
 }
 
@@ -443,37 +690,47 @@ try {
 
     Write-Section 'Project paths'
     $detectedRepoRoot = Resolve-RepoRoot
-    $repoRootFinal = Read-RequiredPath -Prompt 'Repo root (must contain .\windows and .\cloud-init)' -Default $detectedRepoRoot
+    while ($true) {
+        $repoRootFinal = Read-RequiredPath -Prompt 'Repo root (must contain .\windows and .\cloud-init)' -Default $detectedRepoRoot -ParameterName 'RepoRoot'
 
-    $seedScript = Join-Path $repoRootFinal 'windows\New-NoCloudSeedDisk.ps1'
-    $vmScript = Join-Path $repoRootFinal 'windows\New-HyperVVmFromGolden.ps1'
-    $templateRoot = Join-Path $repoRootFinal 'cloud-init'
-
-    foreach ($requiredFile in @($seedScript, $vmScript, $templateRoot)) {
-        if (-not (Test-Path $requiredFile)) {
-            throw "Required project path not found: $requiredFile"
+        $seedScript = Join-Path $repoRootFinal 'windows\New-NoCloudSeedDisk.ps1'
+        $vmScript = Join-Path $repoRootFinal 'windows\New-HyperVVmFromGolden.ps1'
+        $templateRoot = Join-Path $repoRootFinal 'cloud-init'
+        $missingProjectPaths = @(
+            @($seedScript, $vmScript, $templateRoot) | Where-Object { -not (Test-Path -LiteralPath $_) }
+        )
+        if ($missingProjectPaths.Count -eq 0) {
+            break
         }
+
+        $expectedRepo = 'folder containing windows\New-NoCloudSeedDisk.ps1, windows\New-HyperVVmFromGolden.ps1, and cloud-init templates'
+        if ($script:AutoMode) {
+            Stop-InputError -Field 'Repo root' -Value $repoRootFinal -Expected $expectedRepo -ParameterName 'RepoRoot'
+        }
+
+        Write-InputRetryWarning -Field 'Repo root' -Value $repoRootFinal -Expected $expectedRepo -ParameterName 'RepoRoot'
+        $detectedRepoRoot = ''
     }
 
     Write-Section 'VM identity'
-    $vmName = Read-RequiredValue -Prompt 'VM name' -Default $DeviceName
-    $hostnameFinal = Read-RequiredValue -Prompt 'Hostname' -Default $(if ($Hostname) { $Hostname } else { $vmName })
-    $adminUserFinal = Read-RequiredValue -Prompt 'Primary admin username' -Default $AdminUser
-    $sshPublicKeyPathFinal = Read-RequiredPath -Prompt 'SSH public key path' -Default $SshPublicKeyPath
+    $vmName = Read-RequiredValue -Prompt 'VM name' -Default $DeviceName -ParameterName 'DeviceName'
+    $hostnameFinal = Read-RequiredValue -Prompt 'Hostname' -Default $(if ($Hostname) { $Hostname } else { $vmName }) -ParameterName 'Hostname'
+    $adminUserFinal = Read-RequiredValue -Prompt 'Primary admin username' -Default $AdminUser -ParameterName 'AdminUser'
+    $sshPublicKeyPathFinal = Read-RequiredPath -Prompt 'SSH public key path' -Default $SshPublicKeyPath -ParameterName 'SshPublicKeyPath'
 
     $autoMac = New-RandomHyperVMacAddress
-    $macAddressFinal = Read-RequiredValue -Prompt 'MAC address (same value will be used for seed + VM)' -Default $(if ($MacAddress) { $MacAddress } else { $autoMac })
+    $macAddressFinal = Read-RequiredMacAddress -Prompt 'MAC address (same value will be used for seed + VM)' -Default $(if ($MacAddress) { $MacAddress } else { $autoMac }) -ParameterName 'MacAddress'
 
     Write-Section 'Storage and switch'
     $seedOnlyFinal = Read-YesNo -Prompt 'Only create/overwrite the seed disk and skip VM creation?' -Default $SeedOnly
 
     $goldenVhdxPathFinal = $null
     if (-not $seedOnlyFinal) {
-        $goldenVhdxPathFinal = Read-RequiredPath -Prompt 'Golden VHDX path' -Default $GoldenVhdxPath
+        $goldenVhdxPathFinal = Read-RequiredPath -Prompt 'Golden VHDX path' -Default $GoldenVhdxPath -ParameterName 'GoldenVhdxPath'
     }
 
     if (-not $SeedDiskPath) {
-        $seedRootFinal = Read-RequiredPath -Prompt 'Seed disks folder' -Default $SeedRoot -MustExist $false
+        $seedRootFinal = Read-RequiredPath -Prompt 'Seed disks folder' -Default $SeedRoot -MustExist $false -ParameterName 'SeedRoot'
         $seedDiskPathFinal = Join-Path $seedRootFinal ("{0}-seed.vhdx" -f $vmName)
     }
     else {
@@ -484,16 +741,21 @@ try {
     $vmRootFinal = $null
     $switchNameFinal = $null
     if (-not $seedOnlyFinal) {
-        $vmRootFinal = Read-RequiredPath -Prompt 'VM root folder' -Default $VmRoot -MustExist $false
-        $switchNameFinal = Read-RequiredValue -Prompt 'Hyper-V switch name' -Default $SwitchName
-        if (-not (Get-VMSwitch -Name $switchNameFinal -ErrorAction SilentlyContinue)) {
-            throw "Hyper-V switch not found: $switchNameFinal"
+        $vmRootFinal = Read-RequiredPath -Prompt 'VM root folder' -Default $VmRoot -MustExist $false -ParameterName 'VmRoot'
+        $switchNameFinal = Read-RequiredValue -Prompt 'Hyper-V switch name' -Default $SwitchName -ParameterName 'SwitchName'
+        while (-not (Get-VMSwitch -Name $switchNameFinal -ErrorAction SilentlyContinue)) {
+            if ($script:AutoMode) {
+                Stop-InputError -Field 'Hyper-V switch name' -Value $switchNameFinal -Expected 'existing Hyper-V switch name. Run Get-VMSwitch to list valid names.' -ParameterName 'SwitchName'
+            }
+
+            Write-InputRetryWarning -Field 'Hyper-V switch name' -Value $switchNameFinal -Expected 'existing Hyper-V switch name. Run Get-VMSwitch to list valid names.' -ParameterName 'SwitchName'
+            $switchNameFinal = Read-RequiredValue -Prompt 'Hyper-V switch name' -Default '' -ParameterName 'SwitchName'
         }
     }
 
     Write-Section 'Networking'
     $useStaticFinal = Read-YesNo -Prompt 'Use static IP networking?' -Default $UseStatic
-    $interfaceNameFinal = Read-RequiredValue -Prompt 'Cloud-init interface name' -Default $InterfaceName
+    $interfaceNameFinal = Read-RequiredValue -Prompt 'Cloud-init interface name' -Default $InterfaceName -ParameterName 'InterfaceName'
 
     $staticIpCidrFinal = $null
     $gatewayFinal = $null
@@ -502,12 +764,27 @@ try {
     if ($useStaticFinal) {
         $staticIpCidrFinal = Resolve-StaticIp -ProvidedStaticIpCidr $StaticIpCidr -ProvidedIpPrefix $IpPrefix -ProvidedIpOctet $IpOctet
         Write-Host "Static IP/CIDR resolved to: $staticIpCidrFinal"
-        $gatewayFinal = Read-RequiredValue -Prompt 'Gateway' -Default $Gateway
+        $gatewayFinal = Read-IPv4AddressValue -Prompt 'Gateway' -Default $Gateway -ParameterName 'Gateway'
 
-        $dnsServersFinal = ConvertFrom-DnsInput -Value $DnsServers
-        if (-not $dnsServersFinal -or $dnsServersFinal.Count -eq 0) {
-            $dnsInput = Read-RequiredValue -Prompt 'DNS servers comma separated' -Default ''
-            $dnsServersFinal = ConvertFrom-DnsInput -Value @($dnsInput)
+        while ($true) {
+            $dnsServersFinal = @(ConvertFrom-DnsInput -Value $DnsServers)
+            if (-not $dnsServersFinal -or $dnsServersFinal.Count -eq 0) {
+                $dnsInput = Read-RequiredValue -Prompt 'DNS servers comma separated' -Default '' -ParameterName 'DnsServers'
+                $dnsServersFinal = @(ConvertFrom-DnsInput -Value @($dnsInput))
+            }
+
+            $invalidDnsServers = @($dnsServersFinal | Where-Object { -not (Test-IPv4Address -Value $_) })
+            if ($invalidDnsServers.Count -eq 0) {
+                break
+            }
+
+            $badDnsValue = $invalidDnsServers -join ', '
+            if ($script:AutoMode) {
+                Stop-InputError -Field 'DNS servers' -Value $badDnsValue -Expected "comma-separated valid IPv4 address list, for example '1.1.1.1,8.8.8.8'" -ParameterName 'DnsServers'
+            }
+
+            Write-InputRetryWarning -Field 'DNS servers' -Value $badDnsValue -Expected "comma-separated valid IPv4 address list, for example '1.1.1.1,8.8.8.8'" -ParameterName 'DnsServers'
+            $DnsServers = @()
         }
     }
 
@@ -519,10 +796,10 @@ try {
     $enableRescueSshPasswordFinal = $false
 
     if ($enableRescueUserFinal) {
-        $rescueUserFinal = Read-RequiredValue -Prompt 'Rescue username' -Default $RescueUser
+        $rescueUserFinal = Read-RequiredValue -Prompt 'Rescue username' -Default $RescueUser -ParameterName 'RescueUser'
         $useSeparateRescueKey = Read-YesNo -Prompt 'Use a different SSH public key for rescue user?' -Default (-not [string]::IsNullOrWhiteSpace($RescueSshPublicKeyPath))
         if ($useSeparateRescueKey) {
-            $rescueSshPublicKeyPathFinal = Read-RequiredPath -Prompt 'Rescue SSH public key path' -Default $RescueSshPublicKeyPath
+            $rescueSshPublicKeyPathFinal = Read-RequiredPath -Prompt 'Rescue SSH public key path' -Default $RescueSshPublicKeyPath -ParameterName 'RescueSshPublicKeyPath'
         }
 
         $enableRescueSshPasswordFinal = Read-YesNo -Prompt 'Enable password SSH login for rescue user?' -Default $EnableRescueSshPassword
@@ -543,18 +820,26 @@ try {
         Assert-Command -Name @('New-VM', 'Get-VM', 'Set-VMProcessor', 'Set-VMMemory', 'Set-VMFirmware', 'Set-VMNetworkAdapter', 'Add-VMHardDiskDrive')
 
         Write-Section 'VM sizing'
-        $memoryStartupGbFinal = Read-PositiveInt -Prompt 'Startup memory in GB' -Default $MemoryStartupGb
-        $minimumMemoryGbFinal = Read-PositiveInt -Prompt 'Minimum memory in GB' -Default $MinimumMemoryGb
-        $maximumMemoryGbFinal = Read-PositiveInt -Prompt 'Maximum memory in GB' -Default $MaximumMemoryGb
-        if ($minimumMemoryGbFinal -gt $memoryStartupGbFinal) {
-            throw 'Minimum memory cannot be greater than startup memory.'
-        }
-        if ($maximumMemoryGbFinal -lt $memoryStartupGbFinal) {
-            throw 'Maximum memory cannot be less than startup memory.'
+        while ($true) {
+            $memoryStartupGbFinal = Read-IntInRange -Prompt 'Startup memory in GB' -Default $MemoryStartupGb -Minimum 1 -Maximum 1024 -ParameterName 'MemoryStartupGb'
+            $minimumMemoryGbFinal = Read-IntInRange -Prompt 'Minimum memory in GB' -Default $MinimumMemoryGb -Minimum 1 -Maximum 1024 -ParameterName 'MinimumMemoryGb'
+            $maximumMemoryGbFinal = Read-IntInRange -Prompt 'Maximum memory in GB' -Default $MaximumMemoryGb -Minimum 1 -Maximum 1024 -ParameterName 'MaximumMemoryGb'
+
+            if ($minimumMemoryGbFinal -le $memoryStartupGbFinal -and $maximumMemoryGbFinal -ge $memoryStartupGbFinal) {
+                break
+            }
+
+            $memoryValue = "Minimum=${minimumMemoryGbFinal}GB, Startup=${memoryStartupGbFinal}GB, Maximum=${maximumMemoryGbFinal}GB"
+            $memoryExpected = 'MinimumMemoryGb <= MemoryStartupGb <= MaximumMemoryGb'
+            if ($script:AutoMode) {
+                Stop-InputError -Field 'VM memory settings' -Value $memoryValue -Expected $memoryExpected -ParameterName 'MemoryStartupGb/MinimumMemoryGb/MaximumMemoryGb'
+            }
+
+            Write-InputRetryWarning -Field 'VM memory settings' -Value $memoryValue -Expected $memoryExpected -ParameterName 'MemoryStartupGb/MinimumMemoryGb/MaximumMemoryGb'
         }
 
-        $processorCountFinal = Read-PositiveInt -Prompt 'Processor count' -Default $ProcessorCount
-        $seedControllerLocationFinal = Read-PositiveInt -Prompt 'Seed disk SCSI controller location' -Default $SeedControllerLocation
+        $processorCountFinal = Read-IntInRange -Prompt 'Processor count' -Default $ProcessorCount -Minimum 1 -Maximum 256 -ParameterName 'ProcessorCount'
+        $seedControllerLocationFinal = Read-IntInRange -Prompt 'Seed disk SCSI controller location' -Default $SeedControllerLocation -Minimum 0 -Maximum 63 -ParameterName 'SeedControllerLocation'
         $startAfterCreateFinal = Read-YesNo -Prompt 'Start the VM immediately after creation?' -Default $StartAfterCreate
     }
 
@@ -676,7 +961,6 @@ try {
     }
 }
 catch {
-    Write-Error $_
+    Write-Error $_.Exception.Message
     exit 1
 }
-

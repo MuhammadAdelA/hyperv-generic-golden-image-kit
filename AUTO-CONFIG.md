@@ -165,3 +165,18 @@ Verify that the SSH public key exists:
 ```powershell
 Test-Path 'C:\Users\YourUser\.ssh\id_ed25519.pub'
 ```
+
+## Error Handling Policy
+
+The wrapper uses the same input-validation policy in both interactive and `-Auto` mode:
+
+- In interactive mode, invalid input shows a clear warning and asks for the correct value again.
+- In `-Auto` mode, invalid input fails fast with a clear error message that names the bad field, shows the current value, explains the expected format, and tells you to fix the config file or override the value from the CLI.
+
+Example `-Auto` error:
+
+```text
+Invalid input for 'Static IP/CIDR'. Current value: 192.168.201. Expected: valid IPv4 CIDR, for example '192.168.201.25/24'. Please correct this value in the config file (...) or override it with -StaticIpCidr, then run again.
+```
+
+This is intentional. `-Auto` should not guess missing or invalid environment values.

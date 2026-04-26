@@ -13,16 +13,16 @@
     VmRoot = 'D:\HyperV\VMs'
     SeedRoot = 'D:\HyperV\Seeds'
     SeedDiskPath = ''
-    SwitchName = 'NAT'
+    SwitchName = 'PanelNAT'
     SeedOnly = $false
 
     UseStatic = $true
     StaticIpCidr = ''
-    IpPrefix = '192.168.200'
-    IpOctet = 10
-    Gateway = '192.168.200.1'
+    IpPrefix = '192.168.201'
+    IpOctet = 25
+    Gateway = '192.168.201.1'
     DnsServers = @('1.1.1.1', '8.8.8.8')
-    InterfaceName = 'eth0'
+    InterfaceName = 'lan0'
 
     EnableRescueUser = $true
     RescueUser = 'rescue'
