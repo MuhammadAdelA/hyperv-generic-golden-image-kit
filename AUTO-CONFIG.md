@@ -49,6 +49,13 @@ SeedRoot = 'D:\HyperV\Seeds'
 SwitchName = 'PanelNAT'
 ```
 
+With the default `SeedDiskPath = ''`, seed files are stored in a per-VM folder:
+
+```text
+D:\HyperV\Seeds\vm-prod-01\vm-prod-01-seed.vhdx
+D:\HyperV\Seeds\vm-prod-01\vm-prod-01-seed.vhdx.rescue.txt
+```
+
 Then run:
 
 ```powershell
