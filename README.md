@@ -76,6 +76,11 @@ Copy-Item .\New-GoldenVmInteractive.config.example.psd1 .\New-GoldenVmInteractiv
 - `VmRoot`
 - `SeedRoot`
 - `SwitchName`
+
+> Seed layout: when `SeedDiskPath` is empty, the wrapper stores each seed disk under a per-VM folder:
+> `<SeedRoot>\<DeviceName>\<DeviceName>-seed.vhdx`.
+> Use `SeedDiskPath` only when you want a full custom seed disk path.
+
 - `SshPublicKeyPath`
 - networking values if `UseStatic = $true`
 

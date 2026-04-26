@@ -472,13 +472,27 @@ try {
         $goldenVhdxPathFinal = Read-RequiredPath -Prompt 'Golden VHDX path' -Default $GoldenVhdxPath
     }
 
+    #if (-not $SeedDiskPath) {
+    #    $seedRootFinal = Read-RequiredPath -Prompt 'Seed disks folder' -Default $SeedRoot -MustExist $false
+    #    $seedDiskPathFinal = Join-Path $seedRootFinal ("{0}-seed.vhdx" -f $vmName)
+    #}
+    #else {
+    #    $seedDiskPathFinal = $SeedDiskPath
+    #}
+    #Write-Host "Seed disk will be created at: $seedDiskPathFinal"
+
     if (-not $SeedDiskPath) {
-        $seedRootFinal = Read-RequiredPath -Prompt 'Seed disks folder' -Default $SeedRoot -MustExist $false
-        $seedDiskPathFinal = Join-Path $seedRootFinal ("{0}-seed.vhdx" -f $vmName)
+        $seedRootFinal = Read-RequiredPath -Prompt 'Seed disks root folder' -Default $SeedRoot -MustExist $false -ParameterName 'SeedRoot'
+        $seedVmFolderFinal = Join-Path $seedRootFinal $vmName
+        $seedDiskPathFinal = Join-Path $seedVmFolderFinal ("{0}-seed.vhdx" -f $vmName)
     }
     else {
+        # Explicit SeedDiskPath is treated as a full override and is not placed under a per-VM folder.
         $seedDiskPathFinal = $SeedDiskPath
+        $seedVmFolderFinal = Split-Path -Parent $seedDiskPathFinal
     }
+
+    Write-Host "Seed folder will be: $seedVmFolderFinal"
     Write-Host "Seed disk will be created at: $seedDiskPathFinal"
 
     $vmRootFinal = $null

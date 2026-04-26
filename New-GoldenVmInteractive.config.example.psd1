@@ -61,15 +61,18 @@
     VmRoot = ''
 
     # SeedRoot:
-    # Folder where cloud-init seed disks will be stored.
-    # Example: 'D:\HyperV\Seeds'
+    # Root folder where cloud-init seed disks will be stored.
+    # When SeedDiskPath is empty, the script creates a per-VM subfolder automatically:
+    #   <SeedRoot>\<DeviceName>\<DeviceName>-seed.vhdx
+    # Example:
+    #   SeedRoot = 'D:\HyperV\Seeds'
+    #   Result   = 'D:\HyperV\Seeds\vm-prod-01\vm-prod-01-seed.vhdx'
     SeedRoot = ''
 
     # SeedDiskPath:
-    # Leave it empty to let the script build it automatically as:
-    #   <SeedRoot>\<DeviceName>-seed.vhdx
-    # Use it only when you want a custom path for the seed disk.
-    # Example: 'D:\HyperV\Seeds\vm-prod-01-seed.vhdx'
+    # Leave it empty for the recommended per-VM folder layout.
+    # Set it only when you want to fully override the generated seed disk path.
+    # Example: 'D:\HyperV\Seeds\custom-location\vm-prod-01-seed.vhdx'
     SeedDiskPath = ''
 
     # SwitchName:
