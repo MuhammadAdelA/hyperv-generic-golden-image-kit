@@ -482,7 +482,7 @@ try {
     #Write-Host "Seed disk will be created at: $seedDiskPathFinal"
 
     if (-not $SeedDiskPath) {
-        $seedRootFinal = Read-RequiredPath -Prompt 'Seed disks root folder' -Default $SeedRoot -MustExist $false -ParameterName 'SeedRoot'
+        $seedRootFinal = Read-RequiredPath -Prompt 'Seed disks root folder' -Default $SeedRoot -MustExist $false
         $seedVmFolderFinal = Join-Path $seedRootFinal $vmName
         $seedDiskPathFinal = Join-Path $seedVmFolderFinal ("{0}-seed.vhdx" -f $vmName)
     }
