@@ -7,10 +7,10 @@ Purpose:
 - Safe by default: dry-run unless -Apply is used.
 
 Example:
-  .\Migrate-SeedDisksToVmFolders.ps1 -SeedRoot "D:\HyperV\Seeds"
+  .\windows-scripts\Migrate-SeedDisksToVmFolders.ps1 -SeedRoot "D:\HyperV\Seeds"
 
 Apply:
-  .\Migrate-SeedDisksToVmFolders.ps1 -SeedRoot "D:\HyperV\Seeds" -Apply
+  .\windows-scripts\Migrate-SeedDisksToVmFolders.ps1 -SeedRoot "D:\HyperV\Seeds" -Apply
 #>
 
 [CmdletBinding()]
@@ -199,6 +199,14 @@ foreach ($seedFile in $rootSeedFiles) {
         })
         continue
     }
+    if ((Test-Path -LiteralPath $oldRescuePath) -and (Test-Path -LiteralPath $newRescuePath)) {
+        $results.Add([PSCustomObject]@{
+            File   = $oldSeedPath
+            Status = "Skipped"
+            Reason = "Target rescue note already exists: $newRescuePath"
+        })
+        continue
+    }
 
     Write-Host ""
     Write-Host "VM/Seed: $vmName" -ForegroundColor Cyan
@@ -221,16 +229,18 @@ foreach ($seedFile in $rootSeedFiles) {
             New-Item -ItemType Directory -Path $targetFolder -Force | Out-Null
         }
 
-        Move-Item -LiteralPath $oldSeedPath -Destination $newSeedPath
-
+        $movedSeed = $false
         $movedRescue = $false
-        if (Test-Path -LiteralPath $oldRescuePath) {
-            Move-Item -LiteralPath $oldRescuePath -Destination $newRescuePath
-            $movedRescue = $true
-        }
+        try {
+            Move-Item -LiteralPath $oldSeedPath -Destination $newSeedPath
+            $movedSeed = $true
 
-        if ($drive) {
-            try {
+            if (Test-Path -LiteralPath $oldRescuePath) {
+                Move-Item -LiteralPath $oldRescuePath -Destination $newRescuePath
+                $movedRescue = $true
+            }
+
+            if ($drive) {
                 Set-VMHardDiskDrive `
                     -VMName $vmName `
                     -ControllerType $drive.ControllerType `
@@ -238,19 +248,16 @@ foreach ($seedFile in $rootSeedFiles) {
                     -ControllerLocation $drive.ControllerLocation `
                     -Path $newSeedPath
             }
-            catch {
-                Write-Warning "Failed to update VM attachment. Rolling back moved seed file."
-
-                if (Test-Path -LiteralPath $newSeedPath) {
-                    Move-Item -LiteralPath $newSeedPath -Destination $oldSeedPath -Force
-                }
-
-                if ($movedRescue -and (Test-Path -LiteralPath $newRescuePath)) {
-                    Move-Item -LiteralPath $newRescuePath -Destination $oldRescuePath -Force
-                }
-
-                throw
+        }
+        catch {
+            Write-Warning "Migration failed. Rolling back every file moved by this item."
+            if ($movedRescue -and (Test-Path -LiteralPath $newRescuePath)) {
+                Move-Item -LiteralPath $newRescuePath -Destination $oldRescuePath -Force
             }
+            if ($movedSeed -and (Test-Path -LiteralPath $newSeedPath)) {
+                Move-Item -LiteralPath $newSeedPath -Destination $oldSeedPath -Force
+            }
+            throw
         }
     }
 

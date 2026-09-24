@@ -2,7 +2,7 @@
 # Copy this file to: New-GoldenVmInteractive.config.psd1
 # Then fill in the values for your environment once.
 # After that, you can run automation with:
-#   .\New-GoldenVmInteractive.ps1 -Auto
+#   .\windows-scripts\create-vm.ps1 -Auto
 #
 # Runtime priority:
 #   1) Values passed from the CLI
@@ -16,7 +16,7 @@
 @{
     # RepoRoot:
     # Path to the project folder that contains the windows and cloud-init folders.
-    # Leave it empty if this config file is next to New-GoldenVmInteractive.ps1 in the same project.
+    # Leave it empty to let create-vm.ps1 detect the project root.
     # Example: 'C:\Tools\hyperv-generic-golden-image'
     RepoRoot = ''
 
@@ -38,7 +38,7 @@
     # SshPublicKeyPath:
     # Path to the public SSH key file on the Windows host.
     # This must point to a .pub file, not the private key.
-    # Correct: 'C:\Users\YourUser\.ssh\id_ed25519.pub'
+    # Correct: '%USERPROFILE%\.ssh\id_ed25519.pub'
     # Wrong:   '$HOME\.ssh\id_ed25519.pub' because psd1 reads it as a literal string.
     SshPublicKeyPath = ''
 
@@ -87,9 +87,17 @@
     # $true  = create/update the seed disk only, without creating the VM.
     SeedOnly = $false
 
+    # NetworkMode:
+    # 'Dhcp'       = use an existing DHCP-capable switch; the tool never invents one.
+    # 'PrivateNat' = fixed IP behind an Internal switch; preflight can create the switch,
+    #                host gateway, and NetNat after explicit approval.
+    # 'Advanced'   = fixed IP on a pre-existing custom/Internal/External switch; the tool
+    #                validates the switch but does not require or create NetNat.
+    NetworkMode = 'Dhcp'
+
     # UseStatic:
     # $false = DHCP, which is the safest general default for automation.
-    # $true  = Static IP. In this case, you must fill StaticIpCidr or IpPrefix/IpOctet + Gateway + DnsServers.
+    # $true  = Static IP. Normally use it with NetworkMode='PrivateNat' or 'Advanced'.
     UseStatic = $false
 
     # StaticIpCidr:
@@ -145,14 +153,14 @@
     # RescueSshPublicKeyPath:
     # Leave it empty to reuse the same SSH key as AdminUser.
     # Set a different .pub path if you want a separate emergency-access key.
-    # Example: 'C:\Users\YourUser\.ssh\rescue_ed25519.pub'
+    # Example: '%USERPROFILE%\.ssh\rescue_ed25519.pub'
     RescueSshPublicKeyPath = ''
 
     # Password:
     # Optional rescue user password.
     # For production, it is better to leave it empty and use SSH key authentication only.
-    # If EnableRescueSshPassword=$true and Password is empty, the script will generate a password and write it to the rescue summary file.
-    # If you type a password manually, it will not be written in plain text to the rescue summary file.
+    # If EnableRescueSshPassword=$true and Password is empty, the script generates a password and displays it once.
+    # Passwords are never written to the rescue summary file.
     Password = ''
 
     # EnableRescueSshPassword:

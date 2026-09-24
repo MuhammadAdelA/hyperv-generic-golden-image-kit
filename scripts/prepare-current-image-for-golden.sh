@@ -21,6 +21,8 @@ set -euo pipefail
 PRIMARY_USER="${PRIMARY_USER:-ubuntuadmin}"
 TEMPLATE_HOSTNAME="${TEMPLATE_HOSTNAME:-ubuntu-template}"
 BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/golden-image-prep-$(date +%Y%m%d-%H%M%S)}"
+PREP_STATE_DIR="/var/lib/golden-image-prep"
+PREP_BACKUP_RECORD="$PREP_STATE_DIR/backup-root"
 APT_PACKAGES=(
   bash-completion
   ca-certificates
@@ -44,6 +46,10 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 
 mkdir -p "$BACKUP_ROOT"/{cloud-cfg,netplan,ssh,home}
+mkdir -p "$PREP_STATE_DIR"
+BACKUP_ROOT="$(readlink -f "$BACKUP_ROOT")"
+printf '%s\n' "$BACKUP_ROOT" > "$PREP_BACKUP_RECORD"
+chmod 600 "$PREP_BACKUP_RECORD"
 
 echo "[1/8] Installing required base packages ..."
 apt-get update

@@ -1,28 +1,30 @@
-# DHCP Example.
-# Copy it to New-GoldenVmInteractive.config.psd1 and don't forget to modify it.
+# DHCP example. The selected switch must already provide DHCP.
+# The Windows-managed Default Switch is suitable for simple development VMs,
+# but its subnet can change and should not be used when the VM needs a stable IP.
 
 @{
     RepoRoot = ''
     DeviceName = 'vm-dhcp-01'
     Hostname = 'vm-dhcp-01'
     AdminUser = 'ubuntu'
-    SshPublicKeyPath = 'C:\Users\YourUser\.ssh\id_ed25519.pub'
+    SshPublicKeyPath = '%USERPROFILE%\.ssh\id_ed25519.pub'
     MacAddress = ''
 
-    GoldenVhdxPath = 'D:\HyperV\Golden\ubuntu-24.04-golden-base.vhdx'
-    VmRoot = 'D:\HyperV\VMs'
-    SeedRoot = 'D:\HyperV\Seeds'
+    GoldenVhdxPath = '' # Auto-detect the first VHDX under the project Golden folder.
+    VmRoot = '%USERPROFILE%\HyperVGoldenImage-Data\VMs'
+    SeedRoot = '%USERPROFILE%\HyperVGoldenImage-Data\Seeds'
     SeedDiskPath = ''
     SwitchName = 'Default Switch'
     SeedOnly = $false
 
+    NetworkMode = 'Dhcp'
     UseStatic = $false
     StaticIpCidr = ''
     IpPrefix = ''
     IpOctet = 0
     Gateway = ''
     DnsServers = @()
-    InterfaceName = 'eth0'
+    InterfaceName = 'lan0'
 
     EnableRescueUser = $true
     RescueUser = 'rescue'

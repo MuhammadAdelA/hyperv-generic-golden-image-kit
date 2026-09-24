@@ -8,8 +8,8 @@ ethernets:
     dhcp6: false
     optional: true
     addresses:
-      - "__IP_CIDR__"
+      - __IP_CIDR__
     routes:
       - to: default
-        via: "__GATEWAY__"
+        via: __GATEWAY__
 __NAMESERVERS_BLOCK__

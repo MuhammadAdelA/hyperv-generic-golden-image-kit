@@ -1,2 +1,11 @@
-
 New-GoldenVmInteractive.config.psd1
+config1.psd1
+
+# Local VM images and generated seed artifacts must never be committed.
+Golden/
+*.vhd
+*.vhdx
+*.avhd
+*.avhdx
+*.iso
+*.rescue.txt

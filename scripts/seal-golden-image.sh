@@ -13,6 +13,29 @@ export DEBIAN_FRONTEND=noninteractive
 
 sync
 
+# Remove the source-machine backup created by the preparation script. Refuse
+# unknown paths instead of recursively deleting a user-supplied location.
+PREP_STATE_DIR="/var/lib/golden-image-prep"
+PREP_BACKUP_RECORD="$PREP_STATE_DIR/backup-root"
+if [[ -f "$PREP_BACKUP_RECORD" ]]; then
+  prep_backup="$(<"$PREP_BACKUP_RECORD")"
+  if [[ -e "$prep_backup" ]]; then
+    prep_backup="$(readlink -f "$prep_backup")"
+    case "$prep_backup" in
+      /var/backups/golden-image-prep-*)
+        rm -rf -- "$prep_backup"
+        ;;
+      *)
+        echo "Refusing to remove unexpected preparation backup: $prep_backup" >&2
+        echo "Move or remove it explicitly before sealing the image." >&2
+        exit 1
+        ;;
+    esac
+  fi
+  rm -f -- "$PREP_BACKUP_RECORD"
+fi
+rmdir "$PREP_STATE_DIR" 2>/dev/null || true
+
 # Remove host-specific identity.
 truncate -s 0 /etc/machine-id
 rm -f /var/lib/dbus/machine-id

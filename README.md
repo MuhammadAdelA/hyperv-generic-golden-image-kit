@@ -37,13 +37,8 @@ The golden image stays clean and generic. Each VM clone gets its own identity in
 ## Project Structure
 
 ```
-├── New-GoldenVmInteractive.ps1        # Config-aware wrapper for seed + VM creation
-├── New-GoldenVmInteractive.config.example.psd1  # Fully commented config template
-├── New-GoldenVmInteractive.config.dhcp.example.psd1    # DHCP example config
-├── New-GoldenVmInteractive.config.static.example.psd1  # Static IP example config
+├── config-examples/                    # Full, DHCP, Private NAT, Advanced, and Seed-only examples
 ├── AUTO-CONFIG.md                      # Auto/config usage guide
-├── Migrate-SeedDisksToVmFolders.ps1    # Move legacy seed disks into per-VM folders
-├── Remove-HyperVVmSafe.ps1             # Preview/delete a VM and its owned files safely
 ├── scripts/                           # Linux-side preparation scripts
 │   ├── prepare-current-image-for-golden.sh  # Initial system setup
 │   └── seal-golden-image.sh                 # Finalize and clean image
@@ -52,27 +47,90 @@ The golden image stays clean and generic. Each VM clone gets its own identity in
 │   ├── user-data.template.yaml        # User script template
 │   ├── network-config.dhcp.yaml       # DHCP network config
 │   └── network-config.static.template.yaml  # Static IP template
-└── windows/                           # PowerShell automation
-    ├── New-NoCloudSeedDisk.ps1        # Create cloud-init seed disk
-    └── New-HyperVVmFromGolden.ps1     # Create VM from golden image
+└── windows-scripts/                   # All executable PowerShell files
+    ├── create-vm.ps1                  # The only VM creation entry point
+    ├── Test-HyperVPreflight.ps1       # Internal environment checks/repair
+    ├── New-NoCloudSeedDisk.ps1        # Internal seed-disk creation
+    ├── New-HyperVVmFromGolden.ps1     # Internal VM creation
+    ├── Migrate-SeedDisksToVmFolders.ps1
+    ├── Remove-HyperVVmSafe.ps1
+    ├── ip-reservations.ps1           # List/release persistent static-IP reservations
+    ├── repair-vm-disk-access.ps1     # Repair per-VM ACLs on attached VHDX files
+    └── uninstall.ps1                 # Remove only per-user application settings
 ```
 
 ## Quick Start
 
-> For config-based automation, start with `AUTO-CONFIG.md`. The main config template is fully commented, and separate DHCP/Static examples are included.
+Run the main script from an elevated PowerShell session. It is the only supported user entry point and needs no prepared config file:
+
+```powershell
+.\windows-scripts\create-vm.ps1
+```
+
+### Interactive configuration and SSH key setup
+
+Create or update the per-user configuration without creating a seed disk, VM, virtual switch, NAT, or IP reservation:
+
+```powershell
+.\windows-scripts\create-vm.ps1 -ConfigureOnly
+```
+
+The wizard accepts an existing OpenSSH public key such as `%USERPROFILE%\.ssh\id_ed25519.pub`. If the selected path does not exist, it offers to create a new Ed25519 key pair without a passphrase. Existing private or public key files are never overwritten.
+
+To request key generation explicitly, including with `-NoPrompt`, provide the public-key destination and use:
+
+```powershell
+.\windows-scripts\create-vm.ps1 -ConfigureOnly -GenerateSshKey `
+  -SshPublicKeyPath "$env:USERPROFILE\.ssh\hyperv-golden.pub"
+```
+
+The private key is created beside it without the `.pub` suffix and is never written to the configuration file. To write the generated configuration to a specific location, add `-ConfigOutputPath '<absolute-path>.psd1'`; otherwise the normal `%LOCALAPPDATA%\HyperVGoldenImage\New-GoldenVmInteractive.config.psd1` path is used.
+
+Interactive prompts color engine-suggested defaults inside `[...]` in cyan, while calculated paths and values use dark cyan. User-entered text keeps the terminal's normal input color.
+
+On first run, the default persistent data layout is created under the current user profile:
+
+```text
+%USERPROFILE%\HyperVGoldenImage-Data\
+├── VMs\
+├── Seeds\
+└── state\ip-allocations.json
+```
+
+The golden VHDX is detected from the project's `Golden` directory when available. You can replace every suggested path interactively.
+
+Ready-to-copy configuration examples:
+
+- `New-GoldenVmInteractive.config.dhcp.example.psd1`: DHCP on an existing DHCP-capable switch.
+- `New-GoldenVmInteractive.config.static.example.psd1`: ready Private NAT on `172.29.240.0/24`; preflight can create its switch, gateway, and NAT after approval.
+- `New-GoldenVmInteractive.config.advanced-static.example.psd1`: static IP on a pre-existing custom or External switch; no NAT is created.
+- `New-GoldenVmInteractive.config.seed-only.example.psd1`: build only the NoCloud seed disk.
+- `New-GoldenVmInteractive.config.example.psd1`: fully commented field reference.
+
+For static networking, a successful seed-only or VM creation reserves the address in `state\ip-allocations.json`. Reservation changes are serialized across concurrent local runs, and a later run refuses to assign that address to a different VM.
+
+```powershell
+# Show reservations
+.\windows-scripts\ip-reservations.ps1
+
+# Release a stale reservation after confirmation
+.\windows-scripts\ip-reservations.ps1 -Action Release -VmName 'vm-old'
+```
+
+### Host preflight check
+
+The entry point automatically runs a read-only preflight before creating a seed disk or VM:
+
+```powershell
+.\windows-scripts\create-vm.ps1
+```
+
+It checks elevation, the Hyper-V feature/module/service and required commands, the selected virtual switch, its management adapter, the host gateway address, and matching `NetNat`. For private NAT, if it finds only repairable switch/NAT problems, it describes the exact repair and asks once before changing the host. It then repeats verification. A missing DHCP switch is never synthesized because the program cannot infer whether the intended switch is external, internal, or private. Repair deliberately refuses to replace an existing switch, modify a conflicting NAT, reuse a gateway assigned to another adapter, or continue when the gateway is outside the expected prefix. `Test-HyperVPreflight.ps1` is an internal helper; users do not need to invoke it.
 
 
 ## Production Automation Example
 
-The wrapper supports a config-first automation model:
-
-1. Copy the example config:
-
-```powershell
-Copy-Item .\New-GoldenVmInteractive.config.example.psd1 .\New-GoldenVmInteractive.config.psd1
-```
-
-2. Edit `New-GoldenVmInteractive.config.psd1` and fill your host-specific values:
+The wrapper creates its config during first run. No copy or example file is required. The resulting file contains host-specific values such as:
 
 - `GoldenVhdxPath`
 - `VmRoot`
@@ -86,34 +144,66 @@ Copy-Item .\New-GoldenVmInteractive.config.example.psd1 .\New-GoldenVmInteractiv
 - `SshPublicKeyPath`
 - networking values if `UseStatic = $true`
 
-3. Run bare automation:
+After first run, use bare automation:
 
 ```powershell
-.\New-GoldenVmInteractive.ps1 -Auto
+.\windows-scripts\create-vm.ps1 -Auto
 ```
 
 CLI parameters override config values. For example, reuse the same config but create another VM:
 
 ```powershell
-.\New-GoldenVmInteractive.ps1 -Auto -DeviceName "vm-prod-02" -Hostname "vm-prod-02"
+.\windows-scripts\create-vm.ps1 -Auto -DeviceName "vm-prod-02" -Hostname "vm-prod-02"
 ```
 
 For static networking, override only the last octet:
 
 ```powershell
-.\New-GoldenVmInteractive.ps1 -Auto -DeviceName "vm-prod-02" -Hostname "vm-prod-02" -IpOctet 26
+.\windows-scripts\create-vm.ps1 -Auto -DeviceName "vm-prod-02" -Hostname "vm-prod-02" -IpOctet 26
 ```
 
 You can also use a different config file:
 
 ```powershell
-.\New-GoldenVmInteractive.ps1 -Auto -ConfigPath "<absolute-path-to-config.psd1>"
+.\windows-scripts\create-vm.ps1 -Auto -ConfigPath "<absolute-path-to-config.psd1>"
 ```
+
+Config lookup order is: explicit `-ConfigPath`, then the current user's `%LOCALAPPDATA%\HyperVGoldenImage\New-GoldenVmInteractive.config.psd1`. On first run no config or example file is required: built-in defaults and environment detection seed the interactive questions. The entry point saves the user config atomically only after seed/VM creation succeeds; cancellation or creation failure does not overwrite it. A `SeedOnly` run preserves the saved golden-disk, VM-root, and switch settings and does not make `SeedOnly` the next-run default. Passwords are never stored. Path values support `~`, `%USERPROFILE%`, and `%LOCALAPPDATA%`.
+
+To import settings from a migrated legacy project, pass either its config file or its backup root:
+
+```powershell
+.\windows-scripts\create-vm.ps1 -ImportConfigPath 'E:\Backup_D\HyperV'
+```
+
+When the root contains a migrated-backup directory, the program discovers its `New-GoldenVmInteractive.config.psd1` without modifying the source. Storage roots are normalized to `<import-root>\VMs` and `<import-root>\Seeds`; historical `VMss` and `Seedss` folders are reported as legacy typo locations but are never moved, registered, or deleted. A stale golden-VHDX path is discarded so the current project's `Golden` directory can be detected. `-ImportConfigPath` and `-ConfigPath` are mutually exclusive. The imported settings are written to the normal per-user config only after a successful creation.
+
+`-Auto` uses valid supplied/configured/default values without prompting, but asks for missing or invalid values. Host repair always requires an explicit answer, even with `-Auto`. Add `-NoPrompt` for scheduled jobs or CI: it never prompts or repairs, and fails before creating a seed or VM when setup or preflight is incomplete:
+
+```powershell
+.\windows-scripts\create-vm.ps1 -Auto -NoPrompt
+```
+
+### Reset / uninstall user settings
+
+Preview the operation without changing anything:
+
+```powershell
+.\windows-scripts\uninstall.ps1 -WhatIf
+```
+
+Remove `%LOCALAPPDATA%\HyperVGoldenImage` after PowerShell confirmation:
+
+```powershell
+.\windows-scripts\uninstall.ps1
+```
+
+For an explicitly unattended removal, use `-Confirm:$false`. This command never removes VMs, VHDX files, switches, NAT configuration, project files, `%USERPROFILE%\HyperVGoldenImage-Data`, or its IP reservation registry. Running `create-vm.ps1` afterward starts the complete first-run setup again while retaining existing VM data and reservations.
 
 A full no-config command is still supported, but it is intentionally verbose because every host-specific value must be explicit:
 
 ```powershell
-.\New-GoldenVmInteractive.ps1 -Auto `
+.\windows-scripts\create-vm.ps1 -Auto `
   -DeviceName "vm-prod-01" `
   -Hostname "vm-prod-01" `
   -AdminUser "ubuntu" `
@@ -155,17 +245,19 @@ Shut down the VM when complete. Take a snapshot of this VM as your golden image.
 For most users, the wrapper is preferred:
 
 ```powershell
-.\New-GoldenVmInteractive.ps1 -Auto -SeedOnly $true
+.\windows-scripts\create-vm.ps1 -SeedOnly -DeviceName "vm-prod-01"
 ```
+
+Seed replacement is transactional: the new VHDX is built and dismounted under a staging name, then atomically replaces the previous seed only after all cloud-init files were written successfully.
 
 Direct seed-disk creation is also available:
 
 ```powershell
-.\windows\New-NoCloudSeedDisk.ps1 `
+.\windows-scripts\New-NoCloudSeedDisk.ps1 `
   -SeedDiskPath "<absolute-path-to-seed-disk.vhdx>" `
   -Hostname "dev-vm-01" `
   -AdminUser "ubuntu" `
-  -SshPublicKeyPath "C:\Users\YourUser\.ssh\id_ed25519.pub" `
+  -SshPublicKeyPath "$env:USERPROFILE\.ssh\id_ed25519.pub" `
   -InterfaceMacAddress "00-15-5D-32-10-01"
 ```
 
@@ -174,13 +266,13 @@ Direct seed-disk creation is also available:
 For most users, the wrapper is preferred:
 
 ```powershell
-.\New-GoldenVmInteractive.ps1 -Auto
+.\windows-scripts\create-vm.ps1 -Auto
 ```
 
 Direct VM creation is also available:
 
 ```powershell
-.\windows\New-HyperVVmFromGolden.ps1 `
+.\windows-scripts\New-HyperVVmFromGolden.ps1 `
   -VmName "dev-vm-01" `
   -GoldenVhdxPath "<absolute-path-to-golden-image.vhdx>" `
   -VmRoot "<absolute-folder-for-vms>" `
@@ -236,13 +328,13 @@ It also moves the matching `.rescue.txt` file when present and updates the exist
 Preview first:
 
 ```powershell
-.\Migrate-SeedDisksToVmFolders.ps1 -SeedRoot "D:\HyperV\Seeds"
+.\windows-scripts\Migrate-SeedDisksToVmFolders.ps1 -SeedRoot "D:\HyperV\Seeds"
 ```
 
 Apply the migration only after reviewing the plan:
 
 ```powershell
-.\Migrate-SeedDisksToVmFolders.ps1 -SeedRoot "D:\HyperV\Seeds" -Apply
+.\windows-scripts\Migrate-SeedDisksToVmFolders.ps1 -SeedRoot "D:\HyperV\Seeds" -Apply
 ```
 
 Recommended checks after migration:
@@ -269,28 +361,52 @@ Use `Remove-HyperVVmSafe.ps1` when you want to inspect and optionally delete a V
 Preview first:
 
 ```powershell
-.\Remove-HyperVVmSafe.ps1 -VmName "vm-prod-01"
+.\windows-scripts\Remove-HyperVVmSafe.ps1 -VmName "vm-prod-01"
 ```
 
 Delete only after reviewing the preview output:
 
 ```powershell
-.\Remove-HyperVVmSafe.ps1 -VmName "vm-prod-01" -Action Delete
+.\windows-scripts\Remove-HyperVVmSafe.ps1 -VmName "vm-prod-01" -Action Delete
+```
+
+Paths under the VM's own dedicated Hyper-V folder are authorized automatically. The folder leaf must match the VM name. To delete an external per-VM seed folder, explicitly authorize its verified root; its leaf must also match the VM name:
+
+```powershell
+.\windows-scripts\Remove-HyperVVmSafe.ps1 -VmName "vm-prod-01" -Action Delete `
+  -AllowedRoot "D:\HyperV\Seeds\vm-prod-01"
 ```
 
 Safety behavior:
 
 - Preview is the default action.
-- The script shows hard disks that will be deleted before deletion.
+- The script shows hard disks that will be deleted before deletion and refuses shared, out-of-root, or broadly named paths.
 - DVD/ISO paths are displayed only and are not deleted directly.
 - Virtual switches, NAT networks, and `VM-NAT` are not deleted.
-- The VM parent folder is deleted only if it becomes empty and its folder name matches the VM name.
+- Authorized files are removed individually. A VM or seed folder is deleted only if it becomes empty and its folder name matches the VM name; non-empty folders are preserved with a warning.
+
+If VM registration was already removed but dedicated residual folders remain, preview their cleanup with explicit roots:
+
+```powershell
+.\windows-scripts\Remove-HyperVVmSafe.ps1 -VmName "vm-prod-01" -CleanupOrphans `
+  -AllowedRoot "D:\HyperV\VMs\vm-prod-01","D:\HyperV\Seeds\vm-prod-01"
+```
+
+After reviewing the preview, add `-Action Delete`. Orphan cleanup removes only the standard `<vm>-seed.vhdx.rescue.txt` sidecar and empty directories. Any unexpected file is displayed and preserved.
 
 ## Configuration
 
 ### Network Configuration
 
-The toolkit supports both DHCP and static IP assignment.
+The guided setup asks for the user's intent:
+
+```text
+[1] Automatic network (DHCP) - recommended
+[2] Private NAT with a fixed IP
+[3] Advanced/custom networking
+```
+
+DHCP hides CIDR, gateway, DNS, and interface details. Private NAT asks once for the VM address, then gateway, DNS, and switch, while deriving `/24` and the NAT network automatically. Only Advanced mode exposes the cloud-init interface and full CIDR controls. The selected mode is saved as `NetworkMode` for later Auto runs.
 
 **DHCP (Default)**
 ```bash
@@ -298,12 +414,16 @@ The toolkit supports both DHCP and static IP assignment.
 # Automatic IP assignment from your network
 ```
 
-**Static IP**
-Edit `cloud-init/network-config.static.template.yaml` and customize:
-- IP address
-- Gateway
-- DNS servers
-- Interface name (if needed)
+**Private NAT example**
+
+```text
+VM IP address [172.29.240.10]:
+Gateway [172.29.240.1]:
+DNS servers [1.1.1.1, 8.8.8.8]:
+Hyper-V switch [HyperV-NAT]:
+```
+
+The ready example uses `172.29.240.0/24` to avoid the common `192.168.x.x` Wi-Fi ranges. The program shows a readable network summary before preflight and prevents an IP reserved for another VM from being reused. Always verify that the selected subnet does not overlap an existing host route or `NetNat` before approving creation.
 
 ### Cloud-Init Customization
 
@@ -321,6 +441,8 @@ Edit `cloud-init/user-data.template.yaml` to add:
    ```
 
 2. Set the public key path when creating the seed disk (edit the PowerShell scripts or pass as parameter)
+
+   The interactive entry point requires an actual OpenSSH public-key file such as `%USERPROFILE%\.ssh\id_ed25519.pub`. Directories, missing files, private keys, and non-key text files are rejected.
 
 3. Use the private key to access VMs:
    ```bash

@@ -83,6 +83,35 @@ function Set-TemplateValues {
     return $Text
 }
 
+function ConvertTo-YamlSingleQuotedScalar {
+    param([AllowNull()][string]$Value)
+    if ($null -eq $Value) { $Value = '' }
+    if ($Value.IndexOfAny([char[]]@("`r", "`n", [char]0)) -ge 0) {
+        throw 'YAML values cannot contain newlines or NUL characters.'
+    }
+    return "'{0}'" -f $Value.Replace("'", "''")
+}
+
+function Assert-LinuxUserName {
+    param([string]$Name, [string]$Label)
+    if ($Name -notmatch '^[a-z_][a-z0-9_-]{0,31}$') { throw "$Label is not a valid Linux username: $Name" }
+}
+
+function Assert-HostName {
+    param([string]$Name)
+    if ($Name.Length -gt 253 -or $Name -notmatch '^(?=.{1,253}$)([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?))*$') {
+        throw "Invalid hostname: $Name"
+    }
+}
+
+function Assert-IpAddress {
+    param([string]$Address, [string]$Label)
+    $parsed = $null
+    if (-not [System.Net.IPAddress]::TryParse($Address, [ref]$parsed) -or $parsed.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) {
+        throw "$Label is not a valid IPv4 address: $Address"
+    }
+}
+
 function New-NameserversBlock {
     param([string[]]$DnsList)
 
@@ -90,7 +119,11 @@ function New-NameserversBlock {
         return ''
     }
 
-    $dnsInline = ($DnsList | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { '"' + $_.Trim() + '"' }) -join ', '
+    $dnsInline = ($DnsList | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object {
+        $value = $_.Trim()
+        Assert-IpAddress -Address $value -Label 'DNS server'
+        ConvertTo-YamlSingleQuotedScalar $value
+    }) -join ', '
     if ([string]::IsNullOrWhiteSpace($dnsInline)) {
         return ''
     }
@@ -103,16 +136,16 @@ function New-NameserversBlock {
 
 function New-ChpasswdBlock {
     param(
-        [Parameter(Mandatory = $true)][string]$UserName,
-        [Parameter(Mandatory = $true)][string]$Password
+        [Parameter(Mandatory = $true)][string]$AccountName,
+        [Parameter(Mandatory = $true)][string]$SecretText
     )
 
 @"
 chpasswd:
   expire: false
   users:
-    - name: $UserName
-      password: $Password
+    - name: $(ConvertTo-YamlSingleQuotedScalar $AccountName)
+      password: $(ConvertTo-YamlSingleQuotedScalar $SecretText)
       type: text
 "@
 }
@@ -123,6 +156,17 @@ if (-not (Test-Path $TemplateRoot)) {
 if (-not (Test-Path $SshPublicKeyPath)) {
     throw "SSH public key not found: $SshPublicKeyPath"
 }
+
+Assert-HostName -Name $Hostname
+Assert-LinuxUserName -Name $AdminUser -Label 'AdminUser'
+if ($InterfaceName -notmatch '^[a-zA-Z0-9_.-]{1,15}$') { throw "Invalid InterfaceName: $InterfaceName" }
+if ($EnableRescueUser) { Assert-LinuxUserName -Name $RescueUser -Label 'RescueUser' }
+if ($StaticIpCidr) {
+    if ($StaticIpCidr -notmatch '^(.+)/(\d{1,2})$') { throw "StaticIpCidr must include a prefix length: $StaticIpCidr" }
+    Assert-IpAddress -Address $matches[1] -Label 'Static IP'
+    if ([int]$matches[2] -gt 32) { throw "Invalid IPv4 prefix length: $($matches[2])" }
+}
+if ($Gateway) { Assert-IpAddress -Address $Gateway -Label 'Gateway' }
 
 $metaTemplatePath = Join-Path $TemplateRoot 'meta-data.template.yaml'
 $userTemplatePath = Join-Path $TemplateRoot 'user-data.template.yaml'
@@ -164,32 +208,32 @@ if ($EnableRescueUser) {
         }
 
         $rescuePasswordConfigured = $true
-        $rescueChpasswdBlock = New-ChpasswdBlock -UserName $RescueUser -Password $RescuePassword
+        $rescueChpasswdBlock = New-ChpasswdBlock -AccountName $RescueUser -SecretText $RescuePassword
     }
 
     $rescueLockPasswd = if ($rescuePasswordConfigured) { 'false' } else { 'true' }
 
     $rescueUserBlock = @"
-  - name: $RescueUser
+  - name: $(ConvertTo-YamlSingleQuotedScalar $RescueUser)
     gecos: Rescue User
     shell: /bin/bash
     groups: [adm, sudo]
     sudo: ALL=(ALL) NOPASSWD:ALL
     lock_passwd: $rescueLockPasswd
     ssh_authorized_keys:
-      - $rescueKey
+      - $(ConvertTo-YamlSingleQuotedScalar $rescueKey)
 "@
 }
 
 $metaContent = Set-TemplateValues -Text $metaTemplate -Values @{
-    '__INSTANCE_ID__' = $InstanceId
-    '__HOSTNAME__'    = $Hostname
+    '__INSTANCE_ID__' = (ConvertTo-YamlSingleQuotedScalar $InstanceId)
+    '__HOSTNAME__'    = (ConvertTo-YamlSingleQuotedScalar $Hostname)
 }
 
 $userContent = Set-TemplateValues -Text $userTemplate -Values @{
     '__HOSTNAME__'              = $Hostname
-    '__ADMIN_USER__'            = $AdminUser
-    '__SSH_PUBLIC_KEY__'        = $sshKey
+    '__ADMIN_USER__'            = (ConvertTo-YamlSingleQuotedScalar $AdminUser)
+    '__SSH_PUBLIC_KEY__'        = (ConvertTo-YamlSingleQuotedScalar $sshKey)
     '__SSH_PWAUTH__'            = $sshPwAuth
     '__RESCUE_USER_BLOCK__'     = $rescueUserBlock.TrimEnd()
     '__RESCUE_CHPASSWD_BLOCK__' = $rescueChpasswdBlock.TrimEnd()
@@ -224,15 +268,28 @@ else {
 $nameserversBlock = New-NameserversBlock -DnsList $DnsServers
 $networkContent = Set-TemplateValues -Text $networkTemplate -Values @{
     '__MAC_ADDRESS__'       = ([string]$cloudInitMacAddress)
-    '__INTERFACE_NAME__'    = $InterfaceName
-    '__IP_CIDR__'           = $StaticIpCidr
-    '__GATEWAY__'           = $Gateway
+    '__INTERFACE_NAME__'    = (ConvertTo-YamlSingleQuotedScalar $InterfaceName)
+    '__IP_CIDR__'           = (ConvertTo-YamlSingleQuotedScalar $StaticIpCidr)
+    '__GATEWAY__'           = (ConvertTo-YamlSingleQuotedScalar $Gateway)
     '__NAMESERVERS_BLOCK__' = $nameserversBlock.TrimEnd()
+}
+
+$SeedDiskPath = [System.IO.Path]::GetFullPath($SeedDiskPath)
+if (Test-Path -LiteralPath $SeedDiskPath -PathType Container) {
+    throw "SeedDiskPath points to a directory, not a VHDX file: $SeedDiskPath"
+}
+$seedParent = Split-Path -Parent $SeedDiskPath
+if (-not (Test-Path -LiteralPath $seedParent)) {
+    New-Item -ItemType Directory -Path $seedParent -Force | Out-Null
 }
 
 $tempRoot = if ($env:TEMP) { $env:TEMP } else { [System.IO.Path]::GetTempPath() }
 $tempDir = Join-Path $tempRoot ("generic-seed-{0}" -f ([guid]::NewGuid().ToString()))
 New-Item -ItemType Directory -Path $tempDir | Out-Null
+$stagingSeedPath = Join-Path $seedParent (".{0}.new-{1}.vhdx" -f ([System.IO.Path]::GetFileNameWithoutExtension($SeedDiskPath)), ([guid]::NewGuid().ToString('N')))
+$mountedStaging = $false
+$buildSucceeded = $false
+$summary = $null
 
 try {
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -240,17 +297,9 @@ try {
     [System.IO.File]::WriteAllText((Join-Path $tempDir 'user-data'), $userContent, $utf8NoBom)
     [System.IO.File]::WriteAllText((Join-Path $tempDir 'network-config'), $networkContent, $utf8NoBom)
 
-    if (Test-Path $SeedDiskPath) {
-        Remove-Item $SeedDiskPath -Force
-    }
-
-    $parent = Split-Path -Parent $SeedDiskPath
-    if (-not (Test-Path $parent)) {
-        New-Item -ItemType Directory -Path $parent | Out-Null
-    }
-
-    New-VHD -Path $SeedDiskPath -Dynamic -SizeBytes 64MB | Out-Null
-    $mounted = Mount-VHD -Path $SeedDiskPath -Passthru
+    New-VHD -Path $stagingSeedPath -Dynamic -SizeBytes 64MB | Out-Null
+    $mounted = Mount-VHD -Path $stagingSeedPath -Passthru
+    $mountedStaging = $true
     $disk = $mounted | Get-Disk
     Initialize-Disk -Number $disk.Number -PartitionStyle GPT | Out-Null
     $partition = New-Partition -DiskNumber $disk.Number -UseMaximumSize -AssignDriveLetter
@@ -272,15 +321,7 @@ try {
     elseif (-not $rescuePasswordConfigured) {
         '<not configured>'
     }
-    elseif ($rescuePasswordGenerated) {
-        $RescuePassword
-    }
-    elseif ($RescuePassword) {
-        '<supplied by caller; not written>'
-    }
-    else {
-        '<not set>'
-    }
+    else { '<configured; not stored>' }
 
     $summary = @(
         "Hostname: $Hostname",
@@ -290,14 +331,57 @@ try {
         "Interface MAC: $cloudInitMacAddress",
         "Seed disk: $SeedDiskPath"
     ) -join [Environment]::NewLine
-    [System.IO.File]::WriteAllText("$SeedDiskPath.rescue.txt", $summary + [Environment]::NewLine, $utf8NoBom)
+    $buildSucceeded = $true
 }
 finally {
-    if (Get-DiskImage -ImagePath $SeedDiskPath -ErrorAction SilentlyContinue) {
-        Dismount-DiskImage -ImagePath $SeedDiskPath -ErrorAction SilentlyContinue
+    if ($mountedStaging) {
+        Dismount-DiskImage -ImagePath $stagingSeedPath -ErrorAction SilentlyContinue
     }
-
     Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+    if (-not $buildSucceeded -and (Test-Path -LiteralPath $stagingSeedPath)) {
+        Remove-Item -LiteralPath $stagingSeedPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+$backupSeedPath = "$SeedDiskPath.backup-$([guid]::NewGuid().ToString('N'))"
+$movedOriginal = $false
+$installedNewSeed = $false
+try {
+    if (Test-Path -LiteralPath $SeedDiskPath) {
+        [System.IO.File]::Replace($stagingSeedPath, $SeedDiskPath, $backupSeedPath, $true)
+        $movedOriginal = $true
+        $installedNewSeed = $true
+    }
+    else {
+        Move-Item -LiteralPath $stagingSeedPath -Destination $SeedDiskPath
+        $installedNewSeed = $true
+    }
+}
+catch {
+    if ($installedNewSeed -and (Test-Path -LiteralPath $SeedDiskPath)) {
+        Remove-Item -LiteralPath $SeedDiskPath -Force -ErrorAction SilentlyContinue
+    }
+    if ($movedOriginal -and (Test-Path -LiteralPath $backupSeedPath)) {
+        Move-Item -LiteralPath $backupSeedPath -Destination $SeedDiskPath -Force
+    }
+    throw
+}
+finally {
+    if (Test-Path -LiteralPath $stagingSeedPath) { Remove-Item -LiteralPath $stagingSeedPath -Force -ErrorAction SilentlyContinue }
+}
+
+if ($movedOriginal -and (Test-Path -LiteralPath $backupSeedPath)) {
+    Remove-Item -LiteralPath $backupSeedPath -Force
+}
+
+$summaryPath = "$SeedDiskPath.rescue.txt"
+$summaryTemporaryPath = "$summaryPath.new-$([guid]::NewGuid().ToString('N'))"
+try {
+    [System.IO.File]::WriteAllText($summaryTemporaryPath, $summary + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
+    Move-Item -LiteralPath $summaryTemporaryPath -Destination $summaryPath -Force
+}
+finally {
+    if (Test-Path -LiteralPath $summaryTemporaryPath) { Remove-Item -LiteralPath $summaryTemporaryPath -Force -ErrorAction SilentlyContinue }
 }
 
 Write-Host "Created NoCloud seed disk: $SeedDiskPath"
@@ -307,7 +391,7 @@ if ($EnableRescueUser) {
         Write-Host 'Rescue password not configured.'
     }
     elseif ($rescuePasswordGenerated) {
-        Write-Host "Generated rescue password: $RescuePassword"
+        Write-Warning "Generated rescue password (shown once; it is not stored): $RescuePassword"
     }
     else {
         Write-Host "Rescue password supplied by caller."
